@@ -1,0 +1,5 @@
+__pycache__/
+.pytest_cache/
+sim/_build/
+sim/out/
+firmware/esp32/.pio/

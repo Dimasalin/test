@@ -138,6 +138,7 @@ background:#2b3a5c;color:#fff}#k{width:92%;background:#c62f3a;padding:34px 0}
 pre{text-align:left;margin:4%;color:#9fb0cc}</style>
 <button onclick="c('takeoff')">Take off</button><button onclick="c('land')">Land</button>
 <button onclick="c('hey')">Hey!</button><button onclick="c('look')">Look there</button>
+<button onclick="c('home')" style="width:92%">Go home</button>
 <button id=k onclick="c('kill')">KILL MOTORS</button><pre id=s></pre><script>
 function c(x){fetch('/cmd?c='+x)}
 setInterval(()=>fetch('/status').then(r=>r.text()).then(t=>s.textContent=t),500)
@@ -154,12 +155,13 @@ static void web_setup()
         else if (c == "land") pending_cmd = NAVI_CMD_LAND;
         else if (c == "hey")  pending_cmd = NAVI_CMD_ATTENTION;
         else if (c == "look") pending_cmd = NAVI_CMD_TARGET;
+        else if (c == "home") pending_cmd = NAVI_CMD_HOME;
         else if (c == "kill") pending_cmd = NAVI_CMD_KILL;
         web.send(200, "text/plain", "ok");
     });
     web.on("/status", [] {
         static const char *names[] = {"LANDED", "TAKEOFF", "FOLLOW", "TARGET",
-                                      "ATTENTION", "LAND", "FAILSAFE"};
+                                      "ATTENTION", "LAND", "FAILSAFE", "HOME"};
         char b[256];
         snprintf(b, sizeof(b),
                  "state  %s\nfault  0x%02x\nfc     %s\nbatt   %.2f V\n"
@@ -185,7 +187,9 @@ void setup()
 
     navi_cfg_t cfg;
     navi_default_cfg(&cfg);
-    cfg.uwb_enabled = (BUILD_STAGE >= 3) && uwb_begin();
+    bool radio = (BUILD_STAGE >= 3 || PAD_ENABLED) && uwb_begin();
+    cfg.uwb_enabled = (BUILD_STAGE >= 3) && radio;
+    cfg.pad_enabled = PAD_ENABLED && radio;
     navi_init(navi, &cfg);
     in.tof_range = -1.0f;
 
@@ -211,6 +215,10 @@ void loop()
         in.uwb_range = r;
         in.uwb_fresh = 1;
     }
+    if (uwb_poll_pad(&r)) {
+        in.pad_range = r;
+        in.pad_fresh = 1;
+    }
     in.dt = 0.02f;
     in.cmd = pending_cmd;
     pending_cmd = NAVI_CMD_NONE;
@@ -221,7 +229,7 @@ void loop()
     }
 
     navi_step(navi, &in, &out);
-    in.att_fresh = in.flow_fresh = in.tof_fresh = in.uwb_fresh = 0;
+    in.att_fresh = in.flow_fresh = in.tof_fresh = in.uwb_fresh = in.pad_fresh = 0;
 
     fc_send_rc();
     fc_request(MSP_ATTITUDE);

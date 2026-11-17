@@ -8,9 +8,10 @@ attention, and lands itself when its battery runs down.
 ![Simulated flight](docs/img/story.gif)
 
 **Status: designed and simulated, not yet built.** Nothing here has flown.
-The flight logic passes 28 automated simulated-flight and protocol tests; the
+The flight logic passes 42 automated simulated-flight and protocol tests; the
 ESP32 firmware has not been compiled for its target or run on hardware, and
-the UWB radio driver for follow-me is not written. Details in
+the UWB radio driver that follow-me and the charging pad depend on is not
+written. Details in
 [docs/BUILD.md](docs/BUILD.md#what-has-and-has-not-been-tested).
 
 ## The short version
@@ -38,6 +39,7 @@ followed, and landed under control.
 | You walk | Trails 1–2 m behind, can drop 6–8 m back, then homes in |
 | You stop | Usually back beside you within ~15 s |
 | Battery low / sensor lost / beacon gone | Lands itself |
+| Told to go home, or battery low with a pad nearby | Lands within 15 cm of the pad centre (median 4 cm) in ~20 s |
 
 The honest limit: the drone only measures its *distance* to you, not your
 direction, and that is not enough to fly at shoulder height beside a walking
@@ -62,16 +64,23 @@ python3 sim/run.py                # the story flight: metrics + sim/out/story.pn
 python3 sim/run.py story --gif    # with animation
 python3 sim/run.py --all          # every scenario
 python3 sim/run.py --mc 40        # Monte Carlo over build tolerances (~6 min)
-python3 -m pytest tests           # 28 tests, ~2 min
+python3 sim/run.py --mc-home 40   # Monte Carlo of landing on the charging pad
+python3 -m pytest tests           # 42 tests, ~3 min
 ```
 
 Scenarios: `story`, `standing`, `low_battery`, `flow_loss`, `beacon_dropout`,
-`beacon_lost`, `table`, `endurance`.
+`beacon_lost`, `table`, `endurance`, `home`, `home_from_pad`,
+`home_low_battery`, `home_pad_lost`.
+
+![Going home on a low battery](docs/img/home_low_battery.png)
+
+Battery runs low, the fairy turns lavender, flies to the pad, circles it
+once and settles. Details: [docs/DESIGN.md](docs/DESIGN.md#going-home-to-a-charging-pad).
 
 ## Build one
 
 [docs/BUILD.md](docs/BUILD.md) is a three-stage guide: hover, then fairy,
-then follow-me, with a bench checklist that catches wiring and sign mistakes
+then follow-me, then a charging pad, with a bench checklist that catches wiring and sign mistakes
 before the props go on.
 
 ```

@@ -17,6 +17,9 @@
 // 2: no beacon. The fairy orbits its take-off spot at shoulder height.
 // 3: UWB beacon worn by the companion. The fairy follows, above head height.
 #define BUILD_STAGE     2
+// 1: there is a charging pad with its own UWB beacon; "Home" flies to it and
+//    a low battery sends the fairy there by itself. Needs the UWB driver.
+#define PAD_ENABLED     0
 
 // ---- flight controller link ----
 #define FC_BAUD         115200

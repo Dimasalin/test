@@ -14,10 +14,12 @@ SOURCES = ["navi_est.c", "navi_ctrl.c", "navi_behavior.c", "msp.c"]
 
 F, I = C.c_float, C.c_int32
 
-LANDED, TAKEOFF, FOLLOW, TARGET, ATTENTION, LAND, FAILSAFE = range(7)
-STATE_NAMES = ["LANDED", "TAKEOFF", "FOLLOW", "TARGET", "ATTENTION", "LAND", "FAILSAFE"]
-CMD_NONE, CMD_TAKEOFF, CMD_LAND, CMD_ATTENTION, CMD_TARGET, CMD_RELEASE, CMD_KILL = range(7)
-FAULT_ATT, FAULT_FLOW, FAULT_TOF, FAULT_UWB, FAULT_VBAT = 1, 2, 4, 8, 16
+LANDED, TAKEOFF, FOLLOW, TARGET, ATTENTION, LAND, FAILSAFE, HOME = range(8)
+STATE_NAMES = ["LANDED", "TAKEOFF", "FOLLOW", "TARGET", "ATTENTION", "LAND", "FAILSAFE",
+               "HOME"]
+(CMD_NONE, CMD_TAKEOFF, CMD_LAND, CMD_ATTENTION, CMD_TARGET, CMD_RELEASE, CMD_KILL,
+ CMD_HOME) = range(8)
+FAULT_ATT, FAULT_FLOW, FAULT_TOF, FAULT_UWB, FAULT_VBAT, FAULT_PAD = 1, 2, 4, 8, 16, 32
 
 
 class In(C.Structure):
@@ -28,6 +30,7 @@ class In(C.Structure):
         ("tof_range", F), ("tof_fresh", I),
         ("uwb_range", F), ("uwb_fresh", I),
         ("vbat", F), ("cmd", I), ("cmd_x", F), ("cmd_y", F), ("cmd_z", F),
+        ("pad_range", F), ("pad_fresh", I),
     ]
 
 
@@ -40,6 +43,7 @@ class Out(C.Structure):
         ("est_vx", F), ("est_vy", F), ("est_vz", F),
         ("tgt_x", F), ("tgt_y", F), ("tgt_vx", F), ("tgt_vy", F), ("tgt_sigma", F),
         ("sp_x", F), ("sp_y", F), ("sp_z", F), ("hover_thr", F),
+        ("pad_x", F), ("pad_y", F), ("pad_sigma", F), ("home_phase", I),
     ]
 
 
@@ -57,6 +61,8 @@ class Cfg(C.Structure):
         ("attention_secs", F), ("target_secs", F), ("idle_attention_secs", F),
         ("lead_enabled", I), ("vel_ff", F),
         ("vbat_warn", F), ("vbat_land", F),
+        ("pad_enabled", I), ("pad_z", F), ("pad_sigma", F),
+        ("pad_orbit_radius", F), ("pad_approach_z", F), ("vbat_home", F),
     ]
 
 

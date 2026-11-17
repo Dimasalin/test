@@ -62,6 +62,13 @@ void navi_default_cfg(navi_cfg_t *c)
 
     c->vbat_warn = 3.50f;
     c->vbat_land = 3.30f;
+
+    c->pad_enabled = 0;
+    c->pad_z = 0.05f;
+    c->pad_sigma = 0.10f;
+    c->pad_orbit_radius = 0.70f;
+    c->pad_approach_z = 0.45f;
+    c->vbat_home = 3.40f;
 }
 
 void navi_init(navi_t *n, const navi_cfg_t *cfg)
@@ -70,6 +77,7 @@ void navi_init(navi_t *n, const navi_cfg_t *cfg)
     n->cfg = *cfg;
     n->rng = 0x4E415649u;
     n->pf_rng = 0x46414952u;
+    n->pad_rng = 0x50414421u;
     n->side = 1.0f;
     n->vbat_f = 4.2f;
     n->state = NAVI_LANDED;
@@ -111,6 +119,25 @@ static float shimmer(float t)
 {
     return 0.72f + 0.18f * sinf(2.0f * NAVI_PI * 9.0f * t) +
            0.10f * sinf(2.0f * NAVI_PI * 0.7f * t);
+}
+
+static int pad_known(const navi_t *n)
+{
+    return n->cfg.pad_enabled && n->pad_init && n->pad_age < 3.0f;
+}
+
+/* Head for the pad; with no pad to head for, the best we can do is land. */
+static void go_home(navi_t *n)
+{
+    if (!pad_known(n)) {
+        enter(n, NAVI_LAND);
+        return;
+    }
+    enter(n, NAVI_HOME);
+    n->home_phase = 0;
+    n->home_low_t = 0.0f;
+    n->home_clear_t = 0.0f;
+    n->homing = 0;
 }
 
 static void handle_command(navi_t *n, const navi_in_t *in)
@@ -155,6 +182,11 @@ static void handle_command(navi_t *n, const navi_in_t *in)
     case NAVI_CMD_RELEASE:
         if (n->state == NAVI_TARGET) enter(n, NAVI_FOLLOW);
         break;
+    case NAVI_CMD_HOME:
+        if (n->state == NAVI_FOLLOW || n->state == NAVI_TARGET ||
+            n->state == NAVI_ATTENTION)
+            go_home(n);
+        break;
     default:
         break;
     }
@@ -185,8 +217,30 @@ static void check_health(navi_t *n, const navi_in_t *in)
         return;
     }
     if (n->state == NAVI_LAND || n->state == NAVI_TAKEOFF) return;
-    if ((f & NAVI_FAULT_VBAT) || n->uwb_age > 15.0f)
-        enter(n, NAVI_LAND);
+    if (f & NAVI_FAULT_VBAT) {
+        enter(n, NAVI_LAND);            /* no reserve left, wherever we are */
+        return;
+    }
+    if (n->state == NAVI_HOME) {
+        /* Lost the pad before we had a fix good enough to finish on. */
+        if (n->home_phase < 2 && n->pad_age > 3.0f) {
+            n->fault |= NAVI_FAULT_PAD;
+            enter(n, NAVI_LAND);
+        }
+        return;
+    }
+    if (n->uwb_age > 15.0f) {
+        if (pad_known(n)) go_home(n);
+        else enter(n, NAVI_LAND);
+        return;
+    }
+    /* Getting low with a pad in earshot: go while there is charge to get
+     * there and survey it properly. */
+    if (c->vbat_home > 0.0f && in->vbat > 0.5f && n->vbat_f < c->vbat_home)
+        n->homebat_t += in->dt;
+    else
+        n->homebat_t = 0.0f;
+    if (n->homebat_t > 2.0f && pad_known(n)) go_home(n);
 }
 
 /* Where to hover relative to the companion. */
@@ -238,6 +292,25 @@ static void follow_setpoint(navi_t *n, const navi_in_t *in, navi_sp_t *sp)
     sp->v_max = c->v_follow;
 }
 
+/* One step of homing on a distance reading alone: fly straight while it is
+ * shrinking, pick a new heading when it is not. */
+static void moth_step(navi_t *n, float dt, float range_f, navi_sp_t *sp)
+{
+    n->home_t += dt;
+    if (n->home_t > 0.8f) {
+        float closing = (n->range_ref - range_f) / n->home_t;
+        if (closing < 0.3f)
+            n->home_hdg = navi_wrap_pi(n->home_hdg + 1.7f + 1.2f * frand(n));
+        n->home_t = 0.0f;
+        n->range_ref = range_f;
+    }
+    sp->x = n->x + 0.8f * cosf(n->home_hdg);
+    sp->y = n->y + 0.8f * sinf(n->home_hdg);
+    sp->vx = 0.0f;
+    sp->vy = 0.0f;
+    sp->v_max = n->cfg.v_dart;
+}
+
 /* Raw-range supervisor.
  *
  * The particle filter can be confidently wrong (a mirror-image hypothesis
@@ -262,21 +335,8 @@ static int homing_setpoint(navi_t *n, const navi_in_t *in, navi_sp_t *sp)
         n->homing = 0;
         return 0;
     }
-    n->home_t += in->dt;
-    if (n->home_t > 0.8f) {
-        float closing = (n->range_ref - n->range_f) / n->home_t;
-        if (closing < 0.3f)
-            n->home_hdg = navi_wrap_pi(n->home_hdg + 1.7f + 1.2f * frand(n));
-        n->home_t = 0.0f;
-        n->range_ref = n->range_f;
-    }
-    float ch = cosf(n->home_hdg), sh = sinf(n->home_hdg);
-    sp->x = n->x + 0.8f * ch;
-    sp->y = n->y + 0.8f * sh;
+    moth_step(n, in->dt, n->range_f, sp);
     sp->z = c->safe_z;
-    sp->vx = 0.0f;
-    sp->vy = 0.0f;
-    sp->v_max = c->v_dart;
     return 1;
 }
 
@@ -328,6 +388,124 @@ static void keepout(navi_t *n, navi_sp_t *sp)
         sp->z += c->safe_z - c->hover_z;        /* keep the bob and bounce */
         if (sp->z < c->safe_z - 0.10f) sp->z = c->safe_z - 0.10f;
     }
+}
+
+/* Going home to the charging pad.
+ *
+ *  0 transit   Fly towards where we think the pad is, at cruise height. If
+ *              the estimate is poor and the pad is far, home on its range.
+ *  1 survey    Drop to just above the pad and fly one full circle around
+ *              it. Down low the radio distance is almost purely horizontal,
+ *              so it pins the pad down well, and going all the way round
+ *              makes a constant ranging bias cancel instead of pushing the
+ *              answer to one side.
+ *  2 move in   Freeze the fix and slide over it. (Directly overhead a range
+ *              says nothing about sideways error, so stop listening.)
+ *  3 settle    Straight down.
+ */
+static void home_setpoint(navi_t *n, const navi_in_t *in, navi_sp_t *sp,
+                          navi_out_t *out)
+{
+    const navi_cfg_t *c = &n->cfg;
+    float dt = in->dt, ts = n->state_t;
+    float dx = n->x - n->pad[0], dy = n->y - n->pad[1];
+    float d = sqrtf(dx * dx + dy * dy);
+    float R = c->pad_orbit_radius;
+    float low_z = c->pad_z + c->pad_approach_z;
+    /* someone is standing where we want to come down */
+    int crowded = c->uwb_enabled && !(n->fault & NAVI_FAULT_UWB) &&
+                  n->range_f < 1.15f;
+
+    switch (n->home_phase) {
+    case 0: {
+        int lost = n->pad_sig > 0.5f && n->pad_range_f > 2.5f;
+        if (lost && !n->homing) {
+            n->homing = 1;
+            n->home_t = 0.0f;
+            n->range_ref = n->pad_range_f;
+            n->home_hdg = atan2f(-dy, -dx);
+        }
+        if (n->homing && n->pad_range_f < 1.8f) n->homing = 0;
+        if (n->homing) {
+            moth_step(n, dt, n->pad_range_f, sp);
+        } else {
+            /* aim for the near side of the survey circle */
+            float k = d > 0.05f ? R / d : 0.0f;
+            sp->x = n->pad[0] + k * dx;
+            sp->y = n->pad[1] + k * dy;
+            sp->v_max = c->v_follow;
+        }
+        if (c->uwb_enabled) keepout(n, sp);
+        sp->z = cruise_z(c);
+        if (!n->homing && d < R + 0.5f && n->pad_sig < 0.4f) {
+            n->home_phase = 1;
+            n->home_ang = atan2f(dy, dx);
+            n->home_low_t = 0.0f;
+            n->z_ramp = n->z;
+        }
+        break;
+    }
+    case 1: {
+        float rate = 0.7f;
+        n->home_ang = navi_wrap_pi(n->home_ang + rate * dt);
+        float ca = cosf(n->home_ang), sa = sinf(n->home_ang);
+        sp->x = n->pad[0] + R * ca;
+        sp->y = n->pad[1] + R * sa;
+        sp->vx = -R * rate * sa;
+        sp->vy = R * rate * ca;
+        sp->v_max = 1.0f;
+        /* Only come down once the person has been clear for a moment, and
+         * go straight back up if they walk in: the survey circle is at knee
+         * height and we cannot see them, only measure how far away they are. */
+        n->home_clear_t = crowded ? 0.0f : n->home_clear_t + dt;
+        if (n->home_clear_t > 1.5f) {
+            if (n->z_ramp > low_z) n->z_ramp -= 0.5f * dt;
+        } else if (n->z_ramp < cruise_z(c)) {
+            n->z_ramp += 0.7f * dt;
+            n->home_low_t = 0.0f;       /* the survey starts again */
+        }
+        sp->z = n->z_ramp;
+        if (n->z < low_z + 0.15f) n->home_low_t += dt;
+        float lap = 2.0f * NAVI_PI / rate;
+        if ((n->home_low_t > lap && n->pad_sig < 0.15f) ||
+            n->home_low_t > 2.5f * lap) {
+            n->home_phase = 2;
+            n->hold_x = n->pad[0];
+            n->hold_y = n->pad[1];
+            n->home_low_t = 0.0f;
+        }
+        break;
+    }
+    case 2: {
+        float hx = n->x - n->hold_x, hy = n->y - n->hold_y;
+        float v = sqrtf(n->vx * n->vx + n->vy * n->vy);
+        sp->x = n->hold_x;
+        sp->y = n->hold_y;
+        sp->z = low_z;
+        sp->v_max = 0.35f;
+        n->home_low_t += dt;
+        if ((sqrtf(hx * hx + hy * hy) < 0.04f && v < 0.08f) ||
+            n->home_low_t > 8.0f) {
+            n->home_phase = 3;
+            n->z_ramp = n->z;
+        }
+        break;
+    }
+    default:
+        n->z_ramp -= 0.25f * dt;
+        sp->x = n->hold_x;
+        sp->y = n->hold_y;
+        sp->z = n->z_ramp > n->z - 0.25f ? n->z_ramp : n->z - 0.25f;
+        sp->v_max = 0.35f;
+        if (n->tof_age < 0.1f && n->agl < 0.07f) enter(n, NAVI_LANDED);
+        break;
+    }
+
+    if (ts < 0.12f) out->buzzer_hz = 3000.0f;
+    else if (ts > 0.18f && ts < 0.36f) out->buzzer_hz = 2200.0f;
+    /* sleepy lavender, breathing slower the closer it is to bed */
+    float breathe = 0.55f + 0.35f * sinf(2.0f * NAVI_PI * (n->home_phase ? 0.5f : 1.0f) * n->t);
+    glow(out, 200, 150, 255, breathe);
 }
 
 static float chirp(float ts, float period)
@@ -461,6 +639,11 @@ void navi_behavior_update(navi_t *n, const navi_in_t *in, navi_sp_t *sp,
             enter(n, NAVI_LANDED);
         break;
 
+    case NAVI_HOME:
+        home_setpoint(n, in, sp, out);
+        if (ts > 90.0f) enter(n, NAVI_LAND);    /* should never take this long */
+        break;
+
     case NAVI_FAILSAFE:
     default:
         if (n->tof_age < 0.3f && n->att_age < 0.25f) {
@@ -501,4 +684,8 @@ void navi_step(navi_t *n, const navi_in_t *in, navi_out_t *out)
     out->tgt_sigma = n->tgt_sigma;
     out->sp_x = sp.x; out->sp_y = sp.y; out->sp_z = sp.z;
     out->hover_thr = n->hover_thr;
+    out->pad_x = n->pad[0];
+    out->pad_y = n->pad[1];
+    out->pad_sigma = n->pad_sig;
+    out->home_phase = n->state == NAVI_HOME ? n->home_phase : -1;
 }

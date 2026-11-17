@@ -50,6 +50,47 @@ def endurance(seed=1):
     return Scenario(name="endurance", seed=seed, duration=420.0, commands=(T0,))
 
 
+def home(seed=1, pad=(1.8, -1.2), **kw):
+    """Told to go home while the person stands by: find the pad, land on it."""
+    return Scenario(name="home", seed=seed, duration=75.0, pad=pad,
+                    commands=(T0, (22.0, nc.CMD_HOME, 0, 0, 0)), **kw)
+
+
+def home_from_pad(seed=1):
+    """Takes off from the pad, follows the person across the room, then
+    is sent back."""
+    return Scenario(name="home_from_pad", seed=seed, duration=95.0, pad=(0.0, 0.0),
+                    legs=((10.0, (-3.5, 1.5)), (40.0, (-3.5, -1.0))),
+                    commands=(T0, (48.0, nc.CMD_HOME, 0, 0, 0)))
+
+
+def home_low_battery(seed=1):
+    """Nobody says anything: the battery runs down and it takes itself home."""
+    return Scenario(name="home_low_battery", seed=seed, duration=130.0, soc0=0.44,
+                    pad=(2.2, 1.0), commands=(T0,))
+
+
+def home_pad_lost(seed=1):
+    """Pad beacon dies during the trip home: land where it is."""
+    return Scenario(name="home_pad_lost", seed=seed, duration=50.0, pad=(2.5, -1.5),
+                    pad_dead_after=23.0,
+                    commands=(T0, (22.0, nc.CMD_HOME, 0, 0, 0)))
+
+
+def home_varied(seed):
+    """Go-home on a randomly mis-built airframe, pad in a random place."""
+    import numpy as np
+    r = np.random.default_rng(2000 + seed)
+    ang, dist = r.uniform(0, 2 * np.pi), r.uniform(1.6, 4.0)
+    sc = varied(seed)
+    sc.name = "home_varied"
+    sc.legs = ()
+    sc.pad = (-0.7 + dist * np.cos(ang), dist * np.sin(ang))   # >= 1.6 m from the person
+    sc.commands = (T0, (20.0, nc.CMD_HOME, 0, 0, 0))
+    sc.duration = 80.0
+    return sc
+
+
 def varied(seed):
     """Story flight on a randomly mis-built airframe (Monte Carlo)."""
     import numpy as np
@@ -65,4 +106,5 @@ def varied(seed):
 
 
 ALL = {f.__name__: f for f in (story, standing, low_battery, flow_loss,
-                               beacon_dropout, beacon_lost, table, endurance)}
+                               beacon_dropout, beacon_lost, table, endurance,
+                               home, home_from_pad, home_low_battery, home_pad_lost)}

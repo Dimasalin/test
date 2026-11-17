@@ -147,3 +147,59 @@ def test_build_tolerances(seed):
     assert m["min_dist_low_m"] > 0.45
     assert m["max_tilt_deg"] < 28
     assert m["motor_sat_s"] < 1.0
+
+
+# ---------------------------------------------------------------- going home
+
+@pytest.mark.parametrize("seed", [1, 2, 3])
+def test_go_home_lands_on_the_pad(seed):
+    sim, m = fly(scenarios.home(seed=seed))
+    assert states(sim)[-3:] == ["FOLLOW", "HOME", "LANDED"]
+    assert m["reached_settle"]
+    assert m["pad_miss_m"] < 0.20            # inside a 40 cm pad
+    assert m["home_secs"] < 40
+    assert m["min_dist_low_m"] > 0.45        # did not come down on the person
+    assert m["touchdown_mps"] < 1.2
+
+
+def test_go_home_to_the_pad_it_took_off_from():
+    sim, m = fly(scenarios.home_from_pad())
+    assert m["final_state"] == "LANDED" and m["reached_settle"]
+    assert m["pad_miss_m"] < 0.20
+
+
+def test_low_battery_goes_home_by_itself():
+    sim, m = fly(scenarios.home_low_battery())
+    assert "HOME" in states(sim) and "LAND" not in states(sim)
+    assert m["pad_miss_m"] < 0.20
+    assert not m["faults"] & nc.FAULT_VBAT   # got there with reserve in hand
+    assert m["end_vbat"] > 3.0
+
+
+def test_pad_beacon_lost_on_the_way_home_lands_in_place():
+    sim, m = fly(scenarios.home_pad_lost())
+    assert states(sim)[-3:] == ["HOME", "LAND", "LANDED"]
+    assert m["faults"] & nc.FAULT_PAD
+
+
+def test_home_command_without_a_pad_just_lands():
+    sc = scenarios.standing(secs=30)
+    sc.commands = (scenarios.T0, (15.0, nc.CMD_HOME, 0, 0, 0))
+    sim, m = fly(sc)
+    assert states(sim)[-3:] == ["FOLLOW", "LAND", "LANDED"]
+
+
+def test_will_not_come_down_on_someone_standing_at_the_pad():
+    sim, m = fly(scenarios.home(pad=(-0.7, 0.0)))     # pad is at the person's feet
+    L = sim.log
+    homing = L["state"] == nc.HOME
+    assert homing.sum() * sim.CTRL_DT > 30            # kept waiting
+    assert L["pos"][homing, 2].min() > 1.80           # ...above head height
+    assert m["min_dist_low_m"] > 0.45
+
+
+@pytest.mark.parametrize("seed", range(1, 7))
+def test_go_home_build_tolerances(seed):
+    sim, m = fly(scenarios.home_varied(seed))
+    assert m["final_state"] == "LANDED" and m["reached_settle"]
+    assert m["pad_miss_m"] < 0.20

@@ -41,6 +41,15 @@ struct navi {
     float    pf_w[NAVI_PF_N];
     uint16_t pf_idx[NAVI_PF_N];
 
+    /* --- charging pad estimate: a fixed point, so position only --- */
+    float    pad[2];
+    float    pad_sig;
+    float    pad_range_f, pad_age, pad_dt;
+    int      pad_init, pad_lost;
+    uint32_t pad_rng;
+    float    pad_pf[NAVI_PF_N][2];
+    float    pad_w[NAVI_PF_N];
+
     /* --- controller --- */
     float ivx, ivy;      /* velocity-loop integrators (m/s^2)         */
     float hover_thr;
@@ -56,6 +65,9 @@ struct navi {
     /* raw-range supervisor */
     float    range_f, range_ref, home_t, home_hdg;
     int      homing;
+    /* going home */
+    int      home_phase;
+    float    home_ang, home_low_t, home_clear_t, homebat_t;
     uint32_t rng;
     int      fault;
 };

@@ -32,7 +32,8 @@ typedef enum {
     NAVI_TARGET,       /* dart to a point of interest and circle it        */
     NAVI_ATTENTION,    /* bounce + flash + chirp in front of the companion */
     NAVI_LAND,         /* controlled descent, then disarm                  */
-    NAVI_FAILSAFE      /* sensors lost: level, sink, cut                   */
+    NAVI_FAILSAFE,     /* sensors lost: level, sink, cut                   */
+    NAVI_HOME          /* fly to the charging pad and land on it           */
 } navi_state_t;
 
 typedef enum {
@@ -42,7 +43,8 @@ typedef enum {
     NAVI_CMD_ATTENTION,
     NAVI_CMD_TARGET,   /* cmd_x/y/z = point of interest in the odom frame  */
     NAVI_CMD_RELEASE,  /* leave TARGET, go back to FOLLOW                  */
-    NAVI_CMD_KILL      /* disarm immediately                               */
+    NAVI_CMD_KILL,     /* disarm immediately                               */
+    NAVI_CMD_HOME      /* go to the pad (lands in place if there is none)  */
 } navi_cmd_t;
 
 enum {
@@ -50,7 +52,8 @@ enum {
     NAVI_FAULT_FLOW  = 1 << 1,  /* optical flow stale / low quality  */
     NAVI_FAULT_TOF   = 1 << 2,  /* range finder stale / out of range */
     NAVI_FAULT_UWB   = 1 << 3,  /* companion beacon not heard        */
-    NAVI_FAULT_VBAT  = 1 << 4   /* battery below landing threshold   */
+    NAVI_FAULT_VBAT  = 1 << 4,  /* battery below landing threshold   */
+    NAVI_FAULT_PAD   = 1 << 5   /* pad beacon lost while going home  */
 };
 
 typedef struct {
@@ -68,6 +71,8 @@ typedef struct {
     float   vbat;            /* V                                         */
     int32_t cmd;             /* navi_cmd_t                                */
     float   cmd_x, cmd_y, cmd_z;
+    float   pad_range;       /* m to the charging pad's beacon            */
+    int32_t pad_fresh;
 } navi_in_t;
 
 typedef struct {
@@ -85,6 +90,8 @@ typedef struct {
     float   tgt_x, tgt_y, tgt_vx, tgt_vy, tgt_sigma;
     float   sp_x, sp_y, sp_z;
     float   hover_thr;
+    float   pad_x, pad_y, pad_sigma;    /* where it thinks the pad is */
+    int32_t home_phase;                 /* 0 transit, 1 survey, 2 move in, 3 settle; -1 n/a */
 } navi_out_t;
 
 typedef struct {
@@ -121,13 +128,20 @@ typedef struct {
     float   vel_ff;           /* 0..1 trust in the companion velocity est.  */
     /* battery (1S) */
     float   vbat_warn, vbat_land;
+    /* charging pad (a second UWB beacon at a fixed spot) */
+    int32_t pad_enabled;
+    float   pad_z;            /* m, height of the pad's beacon above the floor */
+    float   pad_sigma;        /* m, range noise assumed for the pad beacon   */
+    float   pad_orbit_radius; /* m, survey circle flown before landing       */
+    float   pad_approach_z;   /* m above the pad for survey and final approach */
+    float   vbat_home;        /* V, head for the pad below this; 0 = never   */
 } navi_cfg_t;
 
 typedef struct navi navi_t;
 
 /* The caller owns the storage: allocate navi_sizeof() bytes (or use
  * NAVI_STORAGE_BYTES for a static buffer). */
-#define NAVI_STORAGE_BYTES 8192
+#define NAVI_STORAGE_BYTES 12288
 uint32_t navi_sizeof(void);
 uint32_t navi_sizeof_cfg(void);
 void     navi_default_cfg(navi_cfg_t *cfg);

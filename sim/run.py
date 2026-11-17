@@ -5,6 +5,7 @@
     python3 sim/run.py standing        # any scenario from scenarios.py
     python3 sim/run.py --all           # every scenario, one line each
     python3 sim/run.py --mc 30         # Monte Carlo over build tolerances
+    python3 sim/run.py --mc-home 40    # Monte Carlo of landing on the pad
     python3 sim/run.py story --gif     # also write an animation
 """
 import argparse
@@ -20,7 +21,8 @@ import scenarios                 # noqa: E402
 from world import Sim, metrics   # noqa: E402
 
 OUT = Path(__file__).resolve().parent / "out"
-STATE_COLORS = ["#8a8f98", "#9ecbff", "#4f9dff", "#e3b62f", "#3fbf6f", "#b08cff", "#e5484d"]
+STATE_COLORS = ["#8a8f98", "#9ecbff", "#4f9dff", "#e3b62f", "#3fbf6f", "#b08cff", "#e5484d",
+                "#ff8ad8"]
 
 
 def fly(sc):
@@ -70,6 +72,11 @@ def plot(sim, path):
         if c[1] == nc.CMD_TARGET:
             ax.plot(c[2], c[3], "*", color="#ffd84a", ms=14, label="point of interest")
     ax.plot(0, 0, "x", color="#9fb0cc", ms=8, label="take-off")
+    if sc.pad:
+        ax.add_patch(plt.Circle(sc.pad, 0.15, fill=False, color="#ff8ad8", lw=2,
+                                label="charging pad (30 cm)"))
+        ax.plot(L["pos"][-1, 0], L["pos"][-1, 1], "v", color="#ff8ad8", ms=7,
+                label="touchdown")
     ax.set_aspect("equal")
     ax.set_xlabel("x [m]", color="#9fb0cc", fontsize=8)
     ax.set_ylabel("y [m]", color="#9fb0cc", fontsize=8)
@@ -113,8 +120,8 @@ def plot(sim, path):
               loc="lower left")
 
     handles = [plt.Rectangle((0, 0), 1, 1, color=STATE_COLORS[i], alpha=0.5)
-               for i in range(7)]
-    fig.legend(handles, nc.STATE_NAMES, ncol=7, fontsize=7, loc="lower center",
+               for i in range(8)]
+    fig.legend(handles, nc.STATE_NAMES, ncol=8, fontsize=7, loc="lower center",
                facecolor="#0e1420", edgecolor="#0e1420", labelcolor="#e8eefc")
     fig.savefig(path, dpi=130, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
@@ -191,6 +198,27 @@ def monte_carlo(n):
     return rows
 
 
+def monte_carlo_home(n):
+    miss, secs, fails = [], [], 0
+    for seed in range(1, n + 1):
+        _, m = fly(scenarios.home_varied(seed))
+        ok = m["final_state"] == "LANDED" and m["reached_settle"]
+        fails += not ok
+        miss.append(m["pad_miss_m"]); secs.append(m["home_secs"])
+        print(f"  run {seed:3d}: {'on pad ' if ok else 'ABORTED'} miss {100 * m['pad_miss_m']:5.1f} cm  "
+              f"took {m['home_secs']:4.1f} s  touchdown {m['touchdown_mps']:.2f} m/s", flush=True)
+    miss, secs = 100 * np.array(miss), np.array(secs)
+    print(f"\nGo-home Monte Carlo, {n} flights, pad 1.6-4 m away in a random direction, "
+          "airframe and sensors varied")
+    print(f"  completed the approach: {n - fails}/{n}")
+    print(f"  miss distance [cm]: median {np.median(miss):.1f}  p95 {np.percentile(miss, 95):.1f}  "
+          f"worst {miss.max():.1f}")
+    for r in (10, 15, 20):
+        print(f"  inside a {2 * r} cm pad: {(miss <= r).sum()}/{n}")
+    print(f"  time from command to touchdown [s]: median {np.median(secs):.0f}  "
+          f"worst {secs.max():.0f}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -198,6 +226,7 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--mc", type=int, default=0, metavar="N")
+    ap.add_argument("--mc-home", type=int, default=0, metavar="N")
     ap.add_argument("--gif", action="store_true")
     ap.add_argument("--no-plot", action="store_true")
     a = ap.parse_args()
@@ -206,13 +235,17 @@ def main():
     if a.mc:
         monte_carlo(a.mc)
         return
+    if a.mc_home:
+        monte_carlo_home(a.mc_home)
+        return
     names = sorted(scenarios.ALL) if a.all else [a.scenario]
     for name in names:
         sim, m = fly(scenarios.ALL[name](seed=a.seed))
         if a.all:
-            print(f"{name:15s} {m['final_state']:8s} airborne {m['airborne_s']:5.0f} s  "
+            pad = f"  pad miss {100 * m['pad_miss_m']:.0f} cm" if "pad_miss_m" in m else ""
+            print(f"{name:17s} {m['final_state']:8s} airborne {m['airborne_s']:5.0f} s  "
                   f"track {m['track_rms_m']:.2f} m  closest-low {m['min_dist_low_m']:.2f} m  "
-                  f"touchdown {m['touchdown_mps']:.2f} m/s  faults {m['faults']:#04x}")
+                  f"touchdown {m['touchdown_mps']:.2f} m/s  faults {m['faults']:#04x}{pad}")
         else:
             print(json.dumps(m, indent=2))
         if not a.no_plot:

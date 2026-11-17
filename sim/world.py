@@ -196,6 +196,8 @@ class Scenario:
     uwb_dead: tuple = (1e9, 1e9)    # (from, to) s: beacon silent
     table: tuple = ()               # (x0, x1, y0, y1, height)
     wind_sigma: float = 0.12
+    pad: tuple = ()                 # (x, y) of the charging pad, if any
+    pad_dead_after: float = 1e9     # s: pad beacon goes silent
 
 
 def story(seed=1, **kw):
@@ -222,7 +224,11 @@ class Sim:
         self.quad = Quad(sc.airframe, soc=sc.soc0)
         self.quad.yaw_rate_bias = math.radians(self.rng.normal(0, 0.15))
         self.person = Person(sc.person_start, sc.legs)
-        self.navi = nc.Navi(**sc.cfg)
+        cfg = dict(sc.cfg)
+        if sc.pad:
+            cfg.setdefault("pad_enabled", 1)
+        self.navi = nc.Navi(**cfg)
+        self.pad_bias = self.rng.normal(0.03, 0.03)
         self.wind = np.zeros(3)
         self.rc = np.zeros(4)
         self.armed = False
@@ -234,7 +240,7 @@ class Sim:
         self.cmds = sorted(sc.commands, key=lambda c: c[0])
         self.log = {k: [] for k in (
             "t pos vel rpy est tgt_est person sp state fault led buzzer rc vbat "
-            "amps sigma hover_thr wind yaw_ref").split()}
+            "amps sigma hover_thr wind yaw_ref pad_est pad_sigma home_phase").split()}
 
     def floor(self, x, y):
         tb = self.sc.table
@@ -280,6 +286,16 @@ class Sim:
                 r += rng.uniform(0.3, 1.0)   # body-blocked path
             s.uwb_range = r
             s.uwb_fresh = 1
+        s.pad_fresh = 0
+        if sc.pad and self.tick % 5 == 2 and self.t < sc.pad_dead_after \
+                and rng.random() > 0.03:
+            d = math.sqrt((q.pos[0] - sc.pad[0]) ** 2 + (q.pos[1] - sc.pad[1]) ** 2 +
+                          (q.pos[2] - self.navi.cfg.pad_z) ** 2)
+            r = d + self.pad_bias + rng.normal(0, 0.08)
+            if rng.random() < 0.02:
+                r += rng.uniform(0.3, 1.0)
+            s.pad_range = r
+            s.pad_fresh = 1
         s.vbat = q.vbat + rng.normal(0, 0.01)
         return s
 
@@ -316,6 +332,9 @@ class Sim:
         L["hover_thr"].append(out.hover_thr)
         L["wind"].append(self.wind.copy())
         L["yaw_ref"].append(self.yaw_ref)
+        L["pad_est"].append((out.pad_x, out.pad_y))
+        L["pad_sigma"].append(out.pad_sigma)
+        L["home_phase"].append(out.home_phase)
 
         n = int(round(self.CTRL_DT / self.PHYS_DT))
         for _ in range(n):
@@ -379,4 +398,10 @@ def metrics(sim: Sim):
         "hover_amps": float(np.median(L["amps"][cruise])) if cruise.any() else float("nan"),
         "faults": int(np.bitwise_or.reduce(L["fault"].astype(int))),
     }
+    if sim.sc.pad:
+        pad = np.array(sim.sc.pad)
+        home = st == nc.HOME
+        m["pad_miss_m"] = float(np.linalg.norm(pos[-1, :2] - pad))
+        m["home_secs"] = float(home.sum() * sim.CTRL_DT)
+        m["reached_settle"] = bool((L["home_phase"] == 3).any())
     return m

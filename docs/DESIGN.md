@@ -16,6 +16,7 @@ tired. Inspired by Navi; the behaviours, sounds and code here are original.
 | **Waiting** | beacon silent > 2 s | Holds position; lands after 15 s | amber pulse | silent |
 | **Tired** | battery < 3.5 V | carries on | red-tinted | silent |
 | **Going home** | battery < 3.3 V for 2 s, or Land | Backs away from you, descends at 0.35 m/s | red pulse / dim blue | silent |
+| **Bedtime** | Go home button, battery < 3.40 V with a pad in range, or beacon lost with a pad in range | Flies to the charging pad, circles it once at knee height, settles onto it | lavender, breathing | two falling notes |
 | **Failsafe** | flow, range or FC data lost | Levels out, descends, cuts motors | fast red strobe | silent |
 
 ## Architecture
@@ -103,6 +104,7 @@ several could not be confirmed. Research notes with sources are at the end.
 | Wire, tape, glue | 30 AWG silicone | 1.5 g est. | — |
 | UWB (stage 3) | Qorvo DWM3000 module (23 × 13 × 2.9 mm, 3.3 V) | 1.5 g est. + 0.5 g carrier | $18 |
 | Beacon (stage 3) | Second DWM3000 + any ESP32 board + small LiPo | not flown | $30 |
+| Pad beacon (stage 4) | Third DWM3000 + any ESP32 board, USB powered | not flown | $30 |
 | Safety pilot | Any ELRS 2.4 GHz radio transmitter | — | $60+ |
 | **All-up, stage 3** | | **≈ 56 g** | **≈ $260** |
 
@@ -187,6 +189,59 @@ gives **direction**: a UWB chip with angle-of-arrival, or a small camera
 tracking an IR beacon. The core's interface would take a bearing as one more
 input; the particle filter already supports any likelihood.
 
+## Going home to a charging pad
+
+Flying on sunlight is out by a factor of about 50 (hover needs ~20 W; the
+usable top surface would collect ~0.4 W in direct sun, milliwatts indoors).
+A pad that charges the drone between flights, solar-fed or not, is the
+workable version, and for that the drone has to land on it.
+
+**How it finds the pad.** The pad carries its own UWB beacon. A fixed beacon
+is the easy case for distance-only tracking: every range taken from a new
+place narrows it down for good. A second, simpler particle filter does this
+all flight long, so the fix is already there when it is needed.
+
+**How it lands on it.**
+
+1. *Transit* at cruise height to the near side of the pad (homing on raw
+   distance if the fix is poor).
+2. *Survey:* drop to 45 cm above the pad and fly one full circle of 0.7 m
+   radius. Down low the distance is almost purely horizontal, so it locates
+   the pad well, and going all the way round makes a constant ranging bias
+   cancel instead of pushing the answer to one side.
+3. *Move in:* freeze the fix and slide over it. Directly overhead a range
+   says nothing about sideways error, so it stops listening.
+4. *Settle:* straight down at 0.25 m/s.
+
+It will not descend while the person's beacon is within 1.15 m, and climbs
+back up if they walk in during the survey: the circle is at knee height and
+the drone cannot see anyone, only measure how far away they are.
+
+**Simulated result**, 40 flights with the pad 1.6–4 m away in a random
+direction and airframe and sensors varied:
+
+| | |
+|---|---|
+| Completed the approach | 40 / 40 |
+| Miss distance | median 4 cm, 95th percentile 12 cm, worst 15 cm |
+| Inside a 20 / 30 / 40 cm pad | 37 / 39 / 40 |
+| Command to touchdown | median 21 s, worst 31 s |
+
+So build the pad as a **shallow funnel about 40 cm across** that the skids
+slide down, with charging contacts at the bottom.
+
+**What it costs.** Heading home at 3.40 V instead of landing at 3.30 V
+shortens a flight from about 4½ minutes to about 3¾ (229 s in simulation,
+ending on the pad). If the reserve runs
+out on the way it lands where it is.
+
+**Not designed yet:** the pad itself (funnel, contacts on the skids, a
+LiHV-safe 1S charger, the solar panel and its buffer battery), and taking
+off again by itself once charged. The pad also needs the unwritten UWB
+driver, ranging two beacons in turn. As a guide, the battery holds about
+2 Wh, so a 5–10 W panel in good sun could refill it in roughly 20–40
+minutes.
+
 ### What the simulation does not cover
 
 - Walls, furniture, ceilings and other people. **The drone has no obstacle
@@ -210,6 +265,7 @@ input; the particle filter already supports any likelihood.
   7 s if it has not lifted.
 - Lands itself on low battery, lost beacon, lost flow, lost range, lost
   flight-controller link. Tilt limited to 30°, climb to 2.2 m.
+- Will not descend onto the pad while the tracked person is within 1.15 m.
 - Every one of those is an automated test in `tests/test_flight.py`.
 
 ## Research notes

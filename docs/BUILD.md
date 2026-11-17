@@ -9,6 +9,7 @@ your airframe has the thrust margin the rest depends on.
 | 1 | Airframe + flow sensor + ESP32 | Hands-off hover. Take off, hold position, land from your phone. |
 | 2 | LEDs, diffuser, wings, piezo | A fairy: flits around its take-off spot, glows, chirps, darts to "look there". |
 | 3 | UWB radio on the drone + beacon you wear | It follows you (above head height). **UWB driver still to be written**, see below. |
+| 4 | A charging pad with its own beacon | It takes itself to bed when told or when the battery is low. Flight logic done and simulated; pad hardware not designed. |
 
 Parts and masses are in [DESIGN.md](DESIGN.md#bill-of-materials).
 
@@ -170,14 +171,40 @@ finds you again when you stop. It flies at 2 m because it is sometimes
 confidently wrong about where you are. Ceilings under 2.4 m are too low for
 this mode.
 
+## Stage 4: a pad to go home to
+
+The flight logic is done: **Go home** on the phone page, a battery below
+3.40 V, or losing your beacon all send it to the pad, where it circles once
+at knee height and settles. In simulation it lands within 15 cm of the pad
+centre every time (median 4 cm), in about 20 seconds.
+
+To build it you need:
+
+1. A third DWM3000 + ESP32 at the centre of the pad, antenna about 5 cm above
+   the floor (`pad_z`), running the same responder as your beacon.
+2. The UWB driver from stage 3, extended to range the two beacons in turn
+   (`uwb_poll_pad()` in `uwb.cpp`).
+3. A shallow funnel about 40 cm across for the skids to slide down.
+   Cardboard is fine for finding out whether it works.
+4. `#define PAD_ENABLED 1` in `config.h`.
+
+Put the pad on the floor with 1.5 m clear around it, and stand back: it
+will not come down while your beacon is within 1.15 m. Do not put the pad on
+a table yet; the survey circle would fly off the edge and the height logic
+has only been simulated for a pad at floor level.
+
+Charging contacts, the charger and any solar panel are yours to design;
+nothing here covers them. Never charge a LiPo unattended on a home-made pad.
+
 ## What has and has not been tested
 
 | | Status |
 |---|---|
-| Flight brain (`firmware/core`) | Simulated: 28 automated tests, Monte Carlo over build tolerances |
+| Flight brain (`firmware/core`) | Simulated: 42 automated tests, Monte Carlo over build tolerances |
 | MSP encode/parse | Unit tested against reference bytes and CRC check value |
 | ESP32 firmware | Syntax-checked on a PC against stub Arduino headers only. **Not compiled for the ESP32** (toolchain download was blocked where this was written) and **never run on hardware** |
 | Betaflight settings above | From Betaflight source and docs, not flown |
 | Pin assignments, sign constants | Best guesses; the bench checks exist to correct them |
-| UWB driver | Not written |
+| UWB driver | Not written (needed for follow-me and for the pad) |
+| Charging pad hardware | Not designed |
 | A physical drone | Not built. This was designed and simulated in software only |
